@@ -1,0 +1,57 @@
+# Robfile for cyk: a terminal bytebeat synthesizer, braille oscilloscope, and .wav recorder.
+
+raz    = ../raz/raz
+pretty = ../raz/tools/Pretty.raz
+concha = ../concha/build/concha
+rloc   = ../rloc/build/rloc
+prefix = /home/luis/.local
+pages  = doc/cyk.1
+
+# The bytebeat synthesizer and studio.
+build/cyk: src/*.raz
+    mkdir -p build
+    {raz} -Werror -I src -o {target} src/Cyk.raz
+
+# Run unit tests, headless test cases, and check manual pages.
+task check: build/cyk
+    mkdir -p build
+    {raz} -Werror -I src -o build/Beat src/Beat.raz
+    build/Beat
+    {raz} -Werror -I src -o build/Wave src/Wave.raz
+    build/Wave
+    {concha} test/check.cn
+    out=$(groff -mandoc -Tutf8 -ww -z {pages} 2>&1)
+    test -z "$out" || { echo "$out"; exit 1; }
+
+# Verify all source files are formatted according to standards.
+task fmt:
+    mkdir -p build
+    {raz} -o build/Pretty {pretty}
+    fail=0
+    for f in src/*.raz; do
+        build/Pretty "$f" | cmp -s - "$f" || { echo "not formatted: $f"; fail=1; }
+    done
+    test "$fail" = 0
+
+# Count lines of code and comments.
+task loc:
+    {rloc} -f src/*.raz
+    {rloc} -c src/*.raz
+
+# Regenerate the asciinema cast and demo GIF.
+task cast: build/cyk
+    {concha} test/cast.cn
+
+# Install into {prefix}.
+task install: build/cyk
+    install -Dm755 build/cyk "$DESTDIR{prefix}/bin/cyk"
+    install -Dm644 doc/cyk.1 "$DESTDIR{prefix}/share/man/man1/cyk.1"
+
+# Remove what install put there.
+task uninstall:
+    rm -f "$DESTDIR{prefix}/bin/cyk" \
+          "$DESTDIR{prefix}/share/man/man1/cyk.1"
+
+# Remove the build directory.
+task clean:
+    rm -rf build

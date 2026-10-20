@@ -1,0 +1,13 @@
+// test/cast.cn: deterministic asciinema recording and GIF generator for cyk.
+//
+//   robbie cast   or   concha test/cast.cn
+//
+// Runs build/cyk across a scripted tour of frames:
+//   - stepping t on "42 Melody"
+//   - toggling v to the bit-plane waterfall
+//   - switching n to "Crowd" and "Sierpinski Harmony"
+//   - tweaking knobs a/b
+//   - live-editing a custom formula in e mode with syntax error underline
+// Writes doc/demo.cast and doc/img/demo.gif.
+
+python3 test/cast.py

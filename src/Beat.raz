@@ -1,0 +1,743 @@
+(* Beat: the bytebeat expression compiler, stack evaluator, and
+   built-in deck of classic tunes for cyk.
+
+   Parses a C-style integer bytebeat formula over t (the sample counter)
+   and three live knob parameters a, b, c into a flat array of
+   stack-machine instructions (Prog), and evaluates samples at 8,000 Hz.
+
+   Compilation and stack execution of:
+       t * (42 & t >> 10)
+
+   Compiles to:
+   +-------+-----------+-------+-----------+-------+--------+-----+
+   | pushT | pushK(42) | pushT | pushK(10) | shrOp | bitAnd | mul |
+   +-------+-----------+-------+-----------+-------+--------+-----+
+       0         1         2         3         4       5       6
+
+   Stack execution step by step:
+       Instruction   Stack state (top at right)
+       -----------   --------------------------
+       pushT         [ t ]
+       pushK(42)     [ t, 42 ]
+       pushT         [ t, 42, t ]
+       pushK(10)     [ t, 42, t, 10 ]
+       shrOp         [ t, 42, (t >> 10) ]
+       bitAnd        [ t, (42 & (t >> 10)) ]
+       mul           [ t * (42 & (t >> 10)) ]
+
+   Depends on Str, and Out (for its self-test main). No heap allocation!
+
+   Leaves out: screen drawing, .wav headers, and terminal I/O (which
+   belong to Wave and Cyk). *)
+module Beat;
+import Str, Out;
+
+const
+    (* The smallest 64-bit signed integer, handled safely in division. *)
+    MinI64 = I64(8000000000000000H);
+
+    (* Maximum number of instructions in a compiled bytebeat program. *)
+    MaxOps* = 128;
+    (* Maximum depth of the evaluation stack. *)
+    MaxStack = 64;
+    (* Default playback sample rate in Hz. *)
+    DefaultRate* = 8000;
+
+    (* Compilation errors. *)
+    Empty*: ERROR = "empty expression";
+    UnexpectedChar*: ERROR = "unexpected character";
+    ExpectedExpr*: ERROR = "expected expression";
+    ExpectedParen*: ERROR = "expected closing parenthesis";
+    TooLong*: ERROR = "program too long";
+    TrailingText*: ERROR = "unexpected trailing text";
+    BadNumber*: ERROR = "bad number";
+
+type
+    (* Stack machine operation codes. *)
+    Op* = variant
+        pushT;
+        pushA;
+        pushB;
+        pushC;
+        pushK(n: I64);
+        neg;
+        bitNot;
+        logNot;
+        mul;
+        divOp;
+        modOp;
+        add;
+        sub;
+        shlOp;
+        shrOp;
+        lt;
+        le;
+        gt;
+        ge;
+        eq;
+        ne;
+        bitAnd;
+        bitXor;
+        bitOr;
+    end;
+
+    (* Compiled bytebeat program. *)
+    Prog* = record
+        ops*: [MaxOps]Op; (* instructions *)
+        len*: INT;        (* number of instructions *)
+        errPos*: INT;     (* byte offset in the source where compile failed *)
+    end;
+
+    (* Built-in tune preset. *)
+    Tune* = record
+        name*: []U8;     (* title of the tune *)
+        author*: []U8;   (* creator and year *)
+        rate*: INT;      (* sample rate in Hz *)
+        a*, b*, c*: I64; (* default knob parameters *)
+        formula*: []U8;  (* bytebeat expression text *)
+    end;
+
+const
+    (* Curated classic bytebeat formulas. *)
+    Tunes*: [10]Tune = [
+        {name: "42 Melody", author: "viznut (2011)", rate: 8000, a: 42, b: 10, c: 1, formula: "t * (a & (t >> b))"},
+        {name: "Crowd", author: "viznut (2011)", rate: 8000, a: 7, b: 12, c: 19, formula: "((t << 1) ^ ((t << 1) + (t >> a) & t >> b)) | t >> (4 - (1 ^ 7 & (t >> c))) | t >> 7"},
+        {name: "Sierpinski Harmony", author: "viznut (2011)", rate: 8000, a: 5, b: 7, c: 4, formula: "(t * a & t >> b) | (t * 3 & t >> 10)"},
+        {name: "Lost in Space", author: "xpansive (2011)", rate: 8000, a: 2, b: 13, c: 5, formula: "((t * (t >> 8 | t >> 9) & 46 & t >> 8)) ^ (t & t >> b | t >> 6)"},
+        {name: "Chip Arpeggio", author: "tejeez (2011)", rate: 8000, a: 5, b: 10, c: 8, formula: "((t * (t >> a | t >> 8)) >> (t >> b))"},
+        {name: "Techno Bass", author: "mu6k (2011)", rate: 8000, a: 9, b: 6, c: 4, formula: "t * (((t >> a) ^ ((t >> a) - 1) ^ 1) % 13)"},
+        {name: "Heavy Drum", author: "bemmu (2011)", rate: 8000, a: 6, b: 8, c: 12, formula: "(t >> a | t | t >> (t >> 16)) * 10 + ((t >> 11) & 7)"},
+        {name: "Starlight", author: "ryg (2011)", rate: 8000, a: 7, b: 11, c: 3, formula: "t * ((t >> b & t >> 8) & (123 & t >> c))"},
+        {name: "Stepper", author: "krcko (2011)", rate: 8000, a: 12, b: 8, c: 4, formula: "(t * 5 & t >> 7) | (t * 3 & t >> a) | (t * 2 & t >> b)"},
+        {name: "Cricket Chirp", author: "cyk (2026)", rate: 8000, a: 6, b: 11, c: 42, formula: "(t * ((t >> a) & c)) ^ (t >> b)"}
+    ];
+
+type
+    (* Lexical token kinds. *)
+    TokenKind = (
+        tokEnd,
+        tokT,
+        tokA,
+        tokB,
+        tokC,
+        tokNum,
+        tokLParen,
+        tokRParen,
+        tokPlus,
+        tokMinus,
+        tokBitNot,
+        tokLogNot,
+        tokMul,
+        tokDiv,
+        tokMod,
+        tokShl,
+        tokShr,
+        tokLt,
+        tokLe,
+        tokGt,
+        tokGe,
+        tokEq,
+        tokNe,
+        tokBitAnd,
+        tokBitXor,
+        tokBitOr
+    );
+
+    (* Parser state tracking position and lookahead token. *)
+    Parser = record
+        src: []U8;          (* expression source bytes *)
+        pos: INT;           (* current scanner read offset *)
+        tokKind: TokenKind; (* lookahead token kind *)
+        tokPos: INT;        (* start offset of lookahead token *)
+        tokVal: I64;        (* literal value when tokKind is tokNum *)
+    end;
+
+(* Returns true if c is an ASCII decimal digit. *)
+proc isDigit(c: U8): BOOL;
+begin
+    return (c >= '0') and (c <= '9');
+end;
+
+(* Returns true if c is an ASCII hexadecimal digit. *)
+proc isHexDigit(c: U8): BOOL;
+begin
+    return ((c >= '0') and (c <= '9')) or
+        ((c >= 'a') and (c <= 'f')) or
+        ((c >= 'A') and (c <= 'F'));
+end;
+
+(* Returns true if c can start an identifier. *)
+proc isIdentStart(c: U8): BOOL;
+begin
+    return ((c >= 'a') and (c <= 'z')) or
+        ((c >= 'A') and (c <= 'Z')) or
+        (c = '_');
+end;
+
+(* Returns true if c can continue an identifier. *)
+proc isIdentRest(c: U8): BOOL;
+begin
+    return ((c >= 'a') and (c <= 'z')) or
+        ((c >= 'A') and (c <= 'Z')) or
+        ((c >= '0') and (c <= '9')) or
+        (c = '_');
+end;
+
+(* Scans the next token into s, skipping whitespace. *)
+proc nextTok(var s: Parser): ERROR;
+var c: U8; start: INT; u: U64; n: I64; ok: BOOL; ident: []U8;
+begin
+    while (s.pos < LEN(s.src)) and (
+        (s.src[s.pos] = ' ') or (s.src[s.pos] = '\t') or
+        (s.src[s.pos] = '\n') or (s.src[s.pos] = '\r')) do
+        INC(s.pos);
+    end;
+    if s.pos >= LEN(s.src) then
+        s.tokKind := tokEnd;
+        s.tokPos := s.pos;
+        return nil;
+    end;
+    s.tokPos := s.pos;
+    c := s.src[s.pos];
+    if isDigit(c) then
+        if (c = '0') and (s.pos + 1 < LEN(s.src)) and ((s.src[s.pos + 1] = 'x') or (s.src[s.pos + 1] = 'X')) then
+            s.pos := s.pos + 2;
+            start := s.pos;
+            while (s.pos < LEN(s.src)) and isHexDigit(s.src[s.pos]) do
+                INC(s.pos);
+            end;
+            if s.pos = start then return BadNumber; end;
+            if (s.pos < LEN(s.src)) and isIdentStart(s.src[s.pos]) then
+                return BadNumber;
+            end;
+            u, ok := Str.toHex(s.src[start..s.pos]);
+            if not ok then return BadNumber; end;
+            s.tokKind := tokNum;
+            s.tokVal := I64(u);
+            return nil;
+        end;
+        start := s.pos;
+        while (s.pos < LEN(s.src)) and isDigit(s.src[s.pos]) do
+            INC(s.pos);
+        end;
+        if (s.pos < LEN(s.src)) and isIdentStart(s.src[s.pos]) then
+            return BadNumber;
+        end;
+        n, ok := Str.toInt(s.src[start..s.pos]);
+        if not ok then return BadNumber; end;
+        s.tokKind := tokNum;
+        s.tokVal := n;
+        return nil;
+    end;
+    if isIdentStart(c) then
+        start := s.pos;
+        while (s.pos < LEN(s.src)) and isIdentRest(s.src[s.pos]) do
+            INC(s.pos);
+        end;
+        ident := s.src[start..s.pos];
+        if (ident = "t") or (ident = "T") then
+            s.tokKind := tokT;
+        elsif (ident = "a") or (ident = "A") then
+            s.tokKind := tokA;
+        elsif (ident = "b") or (ident = "B") then
+            s.tokKind := tokB;
+        elsif (ident = "c") or (ident = "C") then
+            s.tokKind := tokC;
+        else
+            return UnexpectedChar;
+        end;
+        return nil;
+    end;
+    match c of
+    | '(': INC(s.pos); s.tokKind := tokLParen; return nil;
+    | ')': INC(s.pos); s.tokKind := tokRParen; return nil;
+    | '+': INC(s.pos); s.tokKind := tokPlus; return nil;
+    | '-': INC(s.pos); s.tokKind := tokMinus; return nil;
+    | '~': INC(s.pos); s.tokKind := tokBitNot; return nil;
+    | '*': INC(s.pos); s.tokKind := tokMul; return nil;
+    | '/': INC(s.pos); s.tokKind := tokDiv; return nil;
+    | '%': INC(s.pos); s.tokKind := tokMod; return nil;
+    | '^': INC(s.pos); s.tokKind := tokBitXor; return nil;
+    | '|': INC(s.pos); s.tokKind := tokBitOr; return nil;
+    | '&': INC(s.pos); s.tokKind := tokBitAnd; return nil;
+    | '!':
+        INC(s.pos);
+        if (s.pos < LEN(s.src)) and (s.src[s.pos] = '=') then
+            INC(s.pos); s.tokKind := tokNe;
+        else
+            s.tokKind := tokLogNot;
+        end;
+        return nil;
+    | '<':
+        INC(s.pos);
+        if (s.pos < LEN(s.src)) and (s.src[s.pos] = '<') then
+            INC(s.pos); s.tokKind := tokShl;
+        elsif (s.pos < LEN(s.src)) and (s.src[s.pos] = '=') then
+            INC(s.pos); s.tokKind := tokLe;
+        else
+            s.tokKind := tokLt;
+        end;
+        return nil;
+    | '>':
+        INC(s.pos);
+        if (s.pos < LEN(s.src)) and (s.src[s.pos] = '>') then
+            INC(s.pos); s.tokKind := tokShr;
+        elsif (s.pos < LEN(s.src)) and (s.src[s.pos] = '=') then
+            INC(s.pos); s.tokKind := tokGe;
+        else
+            s.tokKind := tokGt;
+        end;
+        return nil;
+    | '=':
+        INC(s.pos);
+        if (s.pos < LEN(s.src)) and (s.src[s.pos] = '=') then
+            INC(s.pos); s.tokKind := tokEq; return nil;
+        else
+            return UnexpectedChar;
+        end;
+    | else:
+        return UnexpectedChar;
+    end;
+end;
+
+(* Appends an instruction to p, failing if p is full. *)
+proc emit(var p: Prog; op: Op; pos: INT): ERROR;
+begin
+    if p.len >= MaxOps then
+        p.errPos := pos;
+        return TooLong;
+    end;
+    p.ops[p.len] := op;
+    INC(p.len);
+    return nil;
+end;
+
+(* Operator precedence for binary operators (0 to 7), or -1 if not binary. *)
+proc prec(k: TokenKind): INT;
+begin
+    match k of
+    | tokMul, tokDiv, tokMod: return 7;
+    | tokPlus, tokMinus: return 6;
+    | tokShl, tokShr: return 5;
+    | tokLt, tokLe, tokGt, tokGe: return 4;
+    | tokEq, tokNe: return 3;
+    | tokBitAnd: return 2;
+    | tokBitXor: return 1;
+    | tokBitOr: return 0;
+    | else: return -1;
+    end;
+end;
+
+(* Converts a binary operator token into its corresponding Op variant. *)
+proc toOp(k: TokenKind): Op;
+begin
+    match k of
+    | tokMul: return mul;
+    | tokDiv: return divOp;
+    | tokMod: return modOp;
+    | tokPlus: return add;
+    | tokMinus: return sub;
+    | tokShl: return shlOp;
+    | tokShr: return shrOp;
+    | tokLt: return lt;
+    | tokLe: return le;
+    | tokGt: return gt;
+    | tokGe: return ge;
+    | tokEq: return eq;
+    | tokNe: return ne;
+    | tokBitAnd: return bitAnd;
+    | tokBitXor: return bitXor;
+    | tokBitOr: return bitOr;
+    | else: return mul;
+    end;
+end;
+
+(* Parses an expression at the given minimum precedence. *)
+proc parseExpr(var s: Parser; minPrec: INT; var p: Prog): ERROR; forward;
+
+(* Parses a unary prefix operator or atom (literal, variable, or parenthesized expr). *)
+proc parseUnaryOrAtom(var s: Parser; var p: Prog): ERROR;
+var pos: INT; val: I64; err: ERROR;
+begin
+    pos := s.tokPos;
+    match s.tokKind of
+    | tokMinus:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        err := parseUnaryOrAtom(s, p);
+        if err # nil then return err; end;
+        return emit(p, neg, pos);
+    | tokBitNot:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        err := parseUnaryOrAtom(s, p);
+        if err # nil then return err; end;
+        return emit(p, bitNot, pos);
+    | tokLogNot:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        err := parseUnaryOrAtom(s, p);
+        if err # nil then return err; end;
+        return emit(p, logNot, pos);
+    | tokPlus:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return parseUnaryOrAtom(s, p);
+    | tokT:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return emit(p, pushT, pos);
+    | tokA:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return emit(p, pushA, pos);
+    | tokB:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return emit(p, pushB, pos);
+    | tokC:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return emit(p, pushC, pos);
+    | tokNum:
+        val := s.tokVal;
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return emit(p, pushK(val), pos);
+    | tokLParen:
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        err := parseExpr(s, 0, p);
+        if err # nil then return err; end;
+        if s.tokKind # tokRParen then
+            p.errPos := s.tokPos;
+            return ExpectedParen;
+        end;
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        return nil;
+    | else:
+        p.errPos := s.tokPos;
+        return ExpectedExpr;
+    end;
+end;
+
+(* Parses a binary expression with precedence climbing. *)
+proc parseExpr(var s: Parser; minPrec: INT; var p: Prog): ERROR;
+var opTok: TokenKind; opPrec, pos: INT; err: ERROR;
+begin
+    err := parseUnaryOrAtom(s, p);
+    if err # nil then return err; end;
+    while true do
+        opPrec := prec(s.tokKind);
+        if opPrec < minPrec then break; end;
+        opTok := s.tokKind;
+        pos := s.tokPos;
+        err := nextTok(s);
+        if err # nil then p.errPos := s.tokPos; return err; end;
+        err := parseExpr(s, opPrec + 1, p);
+        if err # nil then return err; end;
+        err := emit(p, toOp(opTok), pos);
+        if err # nil then return err; end;
+    end;
+    return nil;
+end;
+
+(* Compiles a bytebeat formula string into a flat instruction array. *)
+proc compile*(src: []U8; var p: Prog): ERROR;
+var s: Parser; err: ERROR;
+begin
+    p.len := 0;
+    p.errPos := 0;
+    s.src := src;
+    s.pos := 0;
+    s.tokKind := tokEnd;
+    s.tokPos := 0;
+    s.tokVal := 0;
+    err := nextTok(s);
+    if err # nil then
+        p.errPos := s.tokPos;
+        return err;
+    end;
+    if s.tokKind = tokEnd then
+        p.errPos := 0;
+        return Empty;
+    end;
+    err := parseExpr(s, 0, p);
+    if err # nil then return err; end;
+    if s.tokKind # tokEnd then
+        p.errPos := s.tokPos;
+        return TrailingText;
+    end;
+    return nil;
+end;
+
+(* Evaluates a compiled program at sample time t and knob values a, b, c. *)
+proc eval*(const p: Prog; t, a, b, c: I64): U8;
+var stack: [MaxStack]I64; sp, i: INT; x, y: I64;
+begin
+    sp := 0;
+    for i := 0 to p.len - 1 do
+        match p.ops[i] of
+        | pushT:
+            if sp < MaxStack then stack[sp] := t; INC(sp); end;
+        | pushA:
+            if sp < MaxStack then stack[sp] := a; INC(sp); end;
+        | pushB:
+            if sp < MaxStack then stack[sp] := b; INC(sp); end;
+        | pushC:
+            if sp < MaxStack then stack[sp] := c; INC(sp); end;
+        | pushK(n):
+            if sp < MaxStack then stack[sp] := n; INC(sp); end;
+        | neg:
+            if sp > 0 then stack[sp - 1] := -stack[sp - 1]; end;
+        | bitNot:
+            if sp > 0 then stack[sp - 1] := ~stack[sp - 1]; end;
+        | logNot:
+            if sp > 0 then
+                if stack[sp - 1] = 0 then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | mul:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] * stack[sp];
+            end;
+        | divOp:
+            if sp >= 2 then
+                DEC(sp);
+                y := stack[sp];
+                x := stack[sp - 1];
+                if (y = 0) or ((x = MinI64) and (y = -1)) then
+                    stack[sp - 1] := 0;
+                else
+                    stack[sp - 1] := x div y;
+                end;
+            end;
+        | modOp:
+            if sp >= 2 then
+                DEC(sp);
+                y := stack[sp];
+                x := stack[sp - 1];
+                if (y = 0) or ((x = MinI64) and (y = -1)) then
+                    stack[sp - 1] := 0;
+                else
+                    stack[sp - 1] := x mod y;
+                end;
+            end;
+        | add:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] + stack[sp];
+            end;
+        | sub:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] - stack[sp];
+            end;
+        | shlOp:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] shl INT(stack[sp] & 63);
+            end;
+        | shrOp:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] shr INT(stack[sp] & 63);
+            end;
+        | lt:
+            if sp >= 2 then
+                DEC(sp);
+                if stack[sp - 1] < stack[sp] then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | le:
+            if sp >= 2 then
+                DEC(sp);
+                if stack[sp - 1] <= stack[sp] then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | gt:
+            if sp >= 2 then
+                DEC(sp);
+                if stack[sp - 1] > stack[sp] then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | ge:
+            if sp >= 2 then
+                DEC(sp);
+                if stack[sp - 1] >= stack[sp] then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | eq:
+            if sp >= 2 then
+                DEC(sp);
+                if stack[sp - 1] = stack[sp] then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | ne:
+            if sp >= 2 then
+                DEC(sp);
+                if stack[sp - 1] # stack[sp] then stack[sp - 1] := 1; else stack[sp - 1] := 0; end;
+            end;
+        | bitAnd:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] & stack[sp];
+            end;
+        | bitXor:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] xor stack[sp];
+            end;
+        | bitOr:
+            if sp >= 2 then
+                DEC(sp);
+                stack[sp - 1] := stack[sp - 1] | stack[sp];
+            end;
+        end;
+    end;
+    if sp > 0 then
+        return U8(stack[sp - 1] & 0FFH);
+    end;
+    return 0;
+end;
+
+(* Fills the out slice with consecutive samples starting from t0. *)
+proc fill*(const p: Prog; t0, a, b, c: I64; out: []U8);
+var i: INT;
+begin
+    for i := 0 to LEN(out) - 1 do
+        out[i] := eval(p, t0 + I64(i), a, b, c);
+    end;
+end;
+
+(* Test assertion helper that halts if cond is false. *)
+proc check(cond: BOOL; msg: []U8);
+var z: INT;
+begin
+    if not cond then
+        Out.str("FAIL: "); Out.str(msg); Out.ln;
+        z := 0;
+        _ := 1 div z;
+    end;
+end;
+
+(* Self-test procedure running the test suite. *)
+proc main*;
+var p: Prog; err: ERROR; i: INT; buf: [4]U8;
+begin
+    (* 1. Compiles all 10 Tunes and checks err = nil and p.len > 0 *)
+    for i := 0 to LEN(Tunes) - 1 do
+        err := compile(Tunes[i].formula, p);
+        check(err = nil, Tunes[i].name);
+        check(p.len > 0, Tunes[i].name);
+    end;
+
+    (* 2. Checks exact values of "t * (42 & (t >> 10))" at t = 0, 1024, 2048, 3072 *)
+    err := compile("t * (42 & (t >> 10))", p);
+    check(err = nil, "compile 42 melody");
+    check(eval(p, 0, 0, 0, 0) = 0, "eval t=0");
+    check(eval(p, 1024, 0, 0, 0) = 0, "eval t=1024");
+    check(eval(p, 2048, 0, 0, 0) = 0, "eval t=2048");
+    check(eval(p, 3072, 0, 0, 0) = 0, "eval t=3072");
+    check(eval(p, 2049, 0, 0, 0) = 2, "eval t=2049");
+    check(eval(p, 3073, 0, 0, 0) = 2, "eval t=3073");
+    fill(p, 2048, 0, 0, 0, buf);
+    check(buf[0] = 0, "fill buf[0]");
+    check(buf[1] = 2, "fill buf[1]");
+
+    (* 3. Checks operator precedence:
+       1 + 2 * 3 = 7
+       1 << 3 + 1 = 16
+       10 / 0 = 0
+       10 % 0 = 0
+       hex 0x2a = 42
+       unary -, ~, !
+       comparisons *)
+    err := compile("1 + 2 * 3", p);
+    check(err = nil, "compile 1 + 2 * 3");
+    check(eval(p, 0, 0, 0, 0) = 7, "eval 1 + 2 * 3");
+
+    err := compile("1 << 3 + 1", p);
+    check(err = nil, "compile 1 << 3 + 1");
+    check(eval(p, 0, 0, 0, 0) = 16, "eval 1 << 3 + 1");
+
+    err := compile("10 / 0", p);
+    check(err = nil, "compile 10 / 0");
+    check(eval(p, 0, 0, 0, 0) = 0, "eval 10 / 0");
+
+    err := compile("10 % 0", p);
+    check(err = nil, "compile 10 % 0");
+    check(eval(p, 0, 0, 0, 0) = 0, "eval 10 % 0");
+
+    err := compile("0x2a", p);
+    check(err = nil, "compile 0x2a");
+    check(eval(p, 0, 0, 0, 0) = 42, "eval 0x2a");
+
+    err := compile("10 + -3", p);
+    check(err = nil, "compile 10 + -3");
+    check(eval(p, 0, 0, 0, 0) = 7, "eval 10 + -3");
+
+    err := compile("~0 & 0xFF", p);
+    check(err = nil, "compile ~0 & 0xFF");
+    check(eval(p, 0, 0, 0, 0) = 255, "eval ~0 & 0xFF");
+
+    err := compile("!0", p);
+    check(err = nil, "compile !0");
+    check(eval(p, 0, 0, 0, 0) = 1, "eval !0");
+
+    err := compile("!42", p);
+    check(err = nil, "compile !42");
+    check(eval(p, 0, 0, 0, 0) = 0, "eval !42");
+
+    err := compile("3 < 5", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 1), "eval 3 < 5");
+    err := compile("5 < 3", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 0), "eval 5 < 3");
+
+    err := compile("3 <= 3", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 1), "eval 3 <= 3");
+    err := compile("4 <= 3", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 0), "eval 4 <= 3");
+
+    err := compile("5 > 3", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 1), "eval 5 > 3");
+    err := compile("3 > 5", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 0), "eval 3 > 5");
+
+    err := compile("3 >= 3", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 1), "eval 3 >= 3");
+    err := compile("2 >= 3", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 0), "eval 2 >= 3");
+
+    err := compile("4 == 4", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 1), "eval 4 == 4");
+    err := compile("4 == 5", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 0), "eval 4 == 5");
+
+    err := compile("4 != 5", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 1), "eval 4 != 5");
+    err := compile("4 != 4", p);
+    check((err = nil) and (eval(p, 0, 0, 0, 0) = 0), "eval 4 != 4");
+
+    (* 4. Checks syntax errors ("", "t * (", "t + * 2", "t 42", "xyz") return non-nil ERROR and set p.errPos *)
+    err := compile("", p);
+    check(err # nil, "syntax empty");
+    check(p.errPos = 0, "syntax empty errPos");
+
+    err := compile("t * (", p);
+    check(err # nil, "syntax t * (");
+    check(p.errPos >= 0, "syntax t * ( errPos");
+
+    err := compile("t + * 2", p);
+    check(err # nil, "syntax t + * 2");
+    check(p.errPos >= 0, "syntax t + * 2 errPos");
+
+    err := compile("t 42", p);
+    check(err # nil, "syntax t 42");
+    check(p.errPos = 2, "syntax t 42 errPos");
+
+    err := compile("xyz", p);
+    check(err # nil, "syntax xyz");
+    check(p.errPos = 0, "syntax xyz errPos");
+
+    (* 5. Prints "Beat: ok\n" via Out.str *)
+    Out.str("Beat: ok\n");
+end;
+
+end Beat.

@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="800" height="200">
+  <title>cyk: bytebeat music in the terminal, a tick at a time</title>
+  <defs>
+    <linearGradient id="cyk-banner-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f2419"/>
+      <stop offset="100%" stop-color="#07120a"/>
+    </linearGradient>
+    <linearGradient id="cyk-wing" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="cyk-belly" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#78350f"/>
+      <stop offset="100%" stop-color="#451a03"/>
+    </linearGradient>
+    <linearGradient id="cyk-card-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#142c20"/>
+      <stop offset="100%" stop-color="#09140e"/>
+    </linearGradient>
+    <clipPath id="cyk-frame">
+      <rect x="4" y="4" width="120" height="120" rx="20"/>
+    </clipPath>
+    <linearGradient id="wave-fade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.9"/>
+      <stop offset="85%" stop-color="#fbbf24" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#fbbf24" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Banner background -->
+  <rect width="800" height="200" rx="20" fill="url(#cyk-banner-bg)"/>
+
+  <!-- Subtle ambient background waveform glow across the right side -->
+  <g opacity="0.18">
+    <path d="M420 54 H440 V36 H460 V64 H480 V26 H504 V54 H528 V38 H552 V72 H576 V22 H600 V58 H624 V34 H648 V68 H672 V18 H696 V50 H720 V30 H744 V62 H768 V26 H790"
+          stroke="#4ade80" stroke-width="2.2" fill="none" stroke-linejoin="miter"/>
+  </g>
+
+  <!-- Cyk the cricket logo card on the left -->
+  <g transform="translate(40, 36)">
+    <rect x="4" y="4" width="120" height="120" rx="20" fill="url(#cyk-card-bg)" stroke="#275038" stroke-width="2"/>
+    <g clip-path="url(#cyk-frame)">
+      <!-- 8-bit baseline & braille audio track -->
+      <line x1="6" y1="104" x2="122" y2="104" stroke="#173827" stroke-width="1" stroke-dasharray="2 2"/>
+
+      <!-- Braille terminal spectrum dots -->
+      <g fill="#34d399" opacity="0.65">
+        <circle cx="12" cy="101" r="1"/><circle cx="14.5" cy="101" r="1"/>
+        <circle cx="12" cy="105" r="1"/><circle cx="14.5" cy="105" r="1"/>
+        <circle cx="12" cy="109" r="1"/><circle cx="14.5" cy="109" r="1"/>
+
+        <circle cx="21" cy="97" r="1"/><circle cx="23.5" cy="97" r="1"/>
+        <circle cx="21" cy="101" r="1"/><circle cx="23.5" cy="101" r="1"/>
+        <circle cx="21" cy="105" r="1"/><circle cx="23.5" cy="105" r="1"/>
+        <circle cx="21" cy="109" r="1"/><circle cx="23.5" cy="109" r="1"/>
+
+        <circle cx="30" cy="105" r="1"/><circle cx="32.5" cy="105" r="1"/>
+        <circle cx="30" cy="109" r="1"/><circle cx="32.5" cy="109" r="1"/>
+
+        <circle cx="39" cy="93" r="1"/><circle cx="41.5" cy="93" r="1"/>
+        <circle cx="39" cy="97" r="1"/><circle cx="41.5" cy="97" r="1"/>
+        <circle cx="39" cy="101" r="1"/><circle cx="41.5" cy="101" r="1"/>
+        <circle cx="39" cy="105" r="1"/><circle cx="41.5" cy="105" r="1"/>
+        <circle cx="39" cy="109" r="1"/><circle cx="41.5" cy="109" r="1"/>
+
+        <circle cx="48" cy="101" r="1"/><circle cx="50.5" cy="101" r="1"/>
+        <circle cx="48" cy="105" r="1"/><circle cx="50.5" cy="105" r="1"/>
+        <circle cx="48" cy="109" r="1"/><circle cx="50.5" cy="109" r="1"/>
+
+        <circle cx="57" cy="105" r="1"/><circle cx="59.5" cy="105" r="1"/>
+        <circle cx="57" cy="109" r="1"/><circle cx="59.5" cy="109" r="1"/>
+
+        <circle cx="66" cy="89" r="1"/><circle cx="68.5" cy="89" r="1"/>
+        <circle cx="66" cy="93" r="1"/><circle cx="68.5" cy="93" r="1"/>
+        <circle cx="66" cy="97" r="1"/><circle cx="68.5" cy="97" r="1"/>
+        <circle cx="66" cy="101" r="1"/><circle cx="68.5" cy="101" r="1"/>
+        <circle cx="66" cy="105" r="1"/><circle cx="68.5" cy="105" r="1"/>
+        <circle cx="66" cy="109" r="1"/><circle cx="68.5" cy="109" r="1"/>
+
+        <circle cx="75" cy="97" r="1"/><circle cx="77.5" cy="97" r="1"/>
+        <circle cx="75" cy="101" r="1"/><circle cx="77.5" cy="101" r="1"/>
+        <circle cx="75" cy="105" r="1"/><circle cx="77.5" cy="105" r="1"/>
+        <circle cx="75" cy="109" r="1"/><circle cx="77.5" cy="109" r="1"/>
+
+        <circle cx="84" cy="93" r="1"/><circle cx="86.5" cy="93" r="1"/>
+        <circle cx="84" cy="97" r="1"/><circle cx="86.5" cy="97" r="1"/>
+        <circle cx="84" cy="101" r="1"/><circle cx="86.5" cy="101" r="1"/>
+        <circle cx="84" cy="105" r="1"/><circle cx="86.5" cy="105" r="1"/>
+        <circle cx="84" cy="109" r="1"/><circle cx="86.5" cy="109" r="1"/>
+
+        <circle cx="93" cy="101" r="1"/><circle cx="95.5" cy="101" r="1"/>
+        <circle cx="93" cy="105" r="1"/><circle cx="95.5" cy="105" r="1"/>
+        <circle cx="93" cy="109" r="1"/><circle cx="95.5" cy="109" r="1"/>
+
+        <circle cx="102" cy="105" r="1"/><circle cx="104.5" cy="105" r="1"/>
+        <circle cx="102" cy="109" r="1"/><circle cx="104.5" cy="109" r="1"/>
+
+        <circle cx="111" cy="97" r="1"/><circle cx="113.5" cy="97" r="1"/>
+        <circle cx="111" cy="101" r="1"/><circle cx="113.5" cy="101" r="1"/>
+        <circle cx="111" cy="105" r="1"/><circle cx="113.5" cy="105" r="1"/>
+      </g>
+
+      <!-- 8-bit stepped square-wave -->
+      <path d="M6 104 H17 V97 H27 V105 H38 V92 H51 V104 H64 V86 H77 V97 H89 V92 H100 V105 H110 V96 H122"
+            stroke="#fbbf24" stroke-width="2" fill="none" stroke-linejoin="miter"/>
+
+      <!-- Antennae -->
+      <path d="M65 33 C61 17 43 11 25 15 C15 18 9 25 7 35"
+            stroke="#86efac" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+      <path d="M68 32 C63 12 45 6 27 10 C16 13 11 20 8 29"
+            stroke="#4ade80" stroke-width="1.3" fill="none" stroke-linecap="round" opacity="0.8"/>
+
+      <!-- Hind leg: femur -->
+      <path d="M44 68 C38 60 27 48 23 44 C20 41 22 47 31 66 C36 75 42 76 46 73 z"
+            fill="#15803d"/>
+      <path d="M42 66 C36 58 27 47 24 44"
+            stroke="#86efac" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+
+      <!-- Hind leg: tibia and foot standing on step C -->
+      <path d="M23 44 L27 88 L30 105 L35 105"
+            stroke="#16a34a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M25 60 l-3 1.5 M26 68 l-3 1.5 M27 76 l-3 1.5"
+            stroke="#86efac" stroke-width="1.4" stroke-linecap="round"/>
+
+      <!-- Abdomen underside -->
+      <path d="M34 66 C28 72 27 82 32 87 C36 91 44 89 50 82 z" fill="url(#cyk-belly)"/>
+      <path d="M31 75 q4 2 8 0 M33 81 q4 2 7 0" stroke="#d97706" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+
+      <!-- Forewing / tegmen -->
+      <path d="M41 54 C34 62 33 76 38 83 C42 87 52 85 58 76 C63 68 63 57 53 51 z"
+            fill="url(#cyk-wing)"/>
+      <path d="M45 56 C39 64 39 74 45 80 M51 58 C46 66 45 73 50 77 M56 62 C52 68 51 73 55 75"
+            stroke="#fde68a" stroke-width="1.2" stroke-linecap="round" fill="none" opacity="0.85"/>
+
+      <!-- Middle leg standing on step D -->
+      <path d="M52 62 L46 76 L44 92 L48 92"
+            stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+      <!-- Left front leg perched on step F -->
+      <path d="M58 60 L62 74 L66 86 L70 86"
+            stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+      <!-- Thorax (pronotum) -->
+      <path d="M50 48 C50 43 56 41 63 43 C67 45 68 54 66 61 C61 65 53 64 50 59 z"
+            fill="#16a34a"/>
+      <path d="M53 47 C57 44 63 45 65 48" stroke="#86efac" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+
+      <!-- Head -->
+      <circle cx="67" cy="43" r="11" fill="#22c55e"/>
+      <path d="M60 41 C62 35 69 34 74 37" stroke="#86efac" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+      <ellipse cx="66" cy="49" rx="3.5" ry="2" fill="#f59e0b" opacity="0.45"/>
+      <path d="M72 48 Q74 50 76 48" stroke="#15803d" stroke-width="1.3" stroke-linecap="round" fill="none"/>
+
+      <!-- Eye -->
+      <ellipse cx="71" cy="40" rx="4.2" ry="4.4" fill="#07120a"/>
+      <circle cx="72.5" cy="38.5" r="1.6" fill="#ffffff"/>
+      <circle cx="69.8" cy="41.5" r="0.8" fill="#ffffff" opacity="0.85"/>
+
+      <!-- Right arm holding tuning fork -->
+      <path d="M64 54 C72 58 80 57 86 52"
+            stroke="#22c55e" stroke-width="2.8" stroke-linecap="round" fill="none"/>
+      <circle cx="86" cy="52" r="2.2" fill="#15803d"/>
+
+      <!-- Tuning fork -->
+      <line x1="86" y1="58" x2="86" y2="42" stroke="#e2e8f0" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="86" cy="59.5" r="1.6" fill="#cbd5e1"/>
+      <path d="M83 38 C83 43 89 43 89 38" stroke="#e2e8f0" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+      <line x1="83" y1="38" x2="83" y2="22" stroke="#f8fafc" stroke-width="2.2" stroke-linecap="round"/>
+      <line x1="89" y1="38" x2="89" y2="22" stroke="#f8fafc" stroke-width="2.2" stroke-linecap="round"/>
+
+      <!-- Vibrations -->
+      <path d="M78 20 C75 23 75 27 78 30" stroke="#fde68a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+      <path d="M74 17 C70 22 70 28 74 33" stroke="#fbbf24" stroke-width="1.3" stroke-linecap="round" fill="none" opacity="0.75"/>
+      <path d="M94 20 C97 23 97 27 94 30" stroke="#fde68a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+      <path d="M98 17 C102 22 102 28 98 33" stroke="#fbbf24" stroke-width="1.3" stroke-linecap="round" fill="none" opacity="0.75"/>
+
+      <!-- Sparkle -->
+      <path d="M86 15 L86 19 M84 17 L88 17" stroke="#fef08a" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- Title: cyk -->
+  <text x="204" y="94" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', Helvetica, Arial, sans-serif"
+        font-size="62" font-weight="800" fill="#f8fafc" letter-spacing="2">cyk</text>
+
+  <!-- Subtitle -->
+  <text x="206" y="130" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', Helvetica, Arial, sans-serif"
+        font-size="18" fill="#a7c4b5">bytebeat music in the terminal, a tick at a time</text>
+
+  <!-- Pills / Meta / Formula -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12">
+    <!-- Formula pill: the bytebeat formula -->
+    <rect x="206" y="148" width="186" height="26" rx="13" fill="#142c20" stroke="#275038"/>
+    <text x="299" y="165" text-anchor="middle" fill="#fbbf24" font-weight="600">t * (42 &amp; t >> 10)</text>
+
+    <!-- Sampling rate pill -->
+    <rect x="402" y="148" width="84" height="26" rx="13" fill="#142c20" stroke="#275038"/>
+    <text x="444" y="165" text-anchor="middle" fill="#86efac">8000 Hz</text>
+
+    <!-- raz pill -->
+    <rect x="496" y="148" width="94" height="26" rx="13" fill="#142c20" stroke="#275038"/>
+    <text x="543" y="165" text-anchor="middle" fill="#86efac">raz 0.21.0</text>
+  </g>
+
+  <!-- Decorative 8-bit waveform extending from the formula pill across to the right -->
+  <g transform="translate(600, 148)">
+    <!-- Baseline track -->
+    <line x1="0" y1="13" x2="160" y2="13" stroke="#173827" stroke-width="1" stroke-dasharray="2 3"/>
+
+    <!-- Stepped square wave in warm amber with fade -->
+    <path d="M0 13 H12 V3 H24 V21 H36 V7 H48 V17 H60 V1 H72 V15 H84 V9 H96 V23 H108 V5 H120 V15 H132 V7 H144 V17 H156"
+          stroke="url(#wave-fade)" stroke-width="1.8" fill="none" stroke-linejoin="miter"/>
+
+    <!-- Braille dots accompanying the wave -->
+    <g fill="#34d399" opacity="0.45">
+      <circle cx="12" cy="7" r="0.9"/><circle cx="14" cy="7" r="0.9"/>
+      <circle cx="12" cy="11" r="0.9"/><circle cx="14" cy="11" r="0.9"/>
+      <circle cx="12" cy="15" r="0.9"/><circle cx="14" cy="15" r="0.9"/>
+
+      <circle cx="36" cy="9" r="0.9"/><circle cx="38" cy="9" r="0.9"/>
+      <circle cx="36" cy="13" r="0.9"/><circle cx="38" cy="13" r="0.9"/>
+      <circle cx="36" cy="17" r="0.9"/><circle cx="38" cy="17" r="0.9"/>
+
+      <circle cx="60" cy="5" r="0.9"/><circle cx="62" cy="5" r="0.9"/>
+      <circle cx="60" cy="9" r="0.9"/><circle cx="62" cy="9" r="0.9"/>
+      <circle cx="60" cy="13" r="0.9"/><circle cx="62" cy="13" r="0.9"/>
+
+      <circle cx="84" cy="11" r="0.9"/><circle cx="86" cy="11" r="0.9"/>
+      <circle cx="84" cy="15" r="0.9"/><circle cx="86" cy="15" r="0.9"/>
+
+      <circle cx="108" cy="7" r="0.9"/><circle cx="110" cy="7" r="0.9"/>
+      <circle cx="108" cy="11" r="0.9"/><circle cx="110" cy="11" r="0.9"/>
+
+      <circle cx="132" cy="9" r="0.9"/><circle cx="134" cy="9" r="0.9"/>
+      <circle cx="132" cy="13" r="0.9"/><circle cx="134" cy="13" r="0.9"/>
+    </g>
+
+    <!-- Formula output note at the end: "cyk" tick -->
+    <text x="164" y="17" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" fill="#fde68a" opacity="0.85">cyk</text>
+  </g>
+</svg>

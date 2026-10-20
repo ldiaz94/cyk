@@ -1,0 +1,299 @@
+.\" cyk(1) - bytebeat synthesizer and oscilloscope for the terminal
+.TH CYK 1 "October 20, 2026" "cyk" "User Commands"
+.SH NAME
+cyk \- bytebeat synthesizer and oscilloscope for the terminal
+.SH SYNOPSIS
+.B cyk
+.RB [ \-l ]
+.RB [ \-n ]
+.RB [ \-p
+.IR n ]
+.RB [ \-r
+.IR hz ]
+.RB [ \-a
+.IR n ]
+.RB [ \-b
+.IR n ]
+.RB [ \-c
+.IR n ]
+.RB [ \-w
+.I file
+.RB [ \-d
+.IR sec ]]
+.RB [ \-s
+.IR cols\fRx\fIrows ]
+.RI [ formula ]
+.SH DESCRIPTION
+A bytebeat is a program in a single arithmetic formula: evaluated 8,000 times
+a second as a sample counter
+.I t
+increments, its low byte is a sample of sound.
+Simple bitwise operations and integer arithmetic turn counting into music:
+rhythms, melodies, arpeggios, and drones.
+.PP
+.B cyk
+evaluates bytebeat formulas and renders their sound and shape in the terminal
+in real time.
+The screen shows the formula, the sample counter
+.IR t ,
+the playback sample rate, three live knobs
+.IR a ,
+.IR b ,
+and
+.IR c ,
+and a visual waveform display.
+.PP
+The display supports two visualizer modes, toggled with
+.BR v :
+a Unicode braille oscilloscope that connects consecutive sample points
+with 2\(mu4 dot cells (U+2800 through U+28FF) to show continuous wave dynamics,
+and an 8-bit bit-plane waterfall showing the raw binary bits of each sample
+over time.
+.PP
+Formulas can be edited live while the sound plays.
+Pressing
+.B e
+or
+.B /
+opens the editor on the bottom row.
+As each character is typed, the formula is compiled.
+If a formula is broken while typing, the place where it failed is underlined,
+while the previous formula plays on.
+Pressing
+.B Enter
+switches to the new formula with no click or pause;
+.B Esc
+cancels the edit and keeps the playing formula.
+.SH OPTIONS
+.TP
+.BR \-p ", " \-\-preset " " \fIn\fR
+Select built-in preset tune
+.I n
+(1 to 10) at startup.
+Default is 1.
+.TP
+.BR \-r ", " \-\-rate " " \fIhz\fR
+Playback sample rate in Hertz.
+Default is 8000.
+.TP
+.BI \-a " n"
+Set the initial integer value for live knob
+.IR a .
+Overrides the preset default.
+.TP
+.BI \-b " n"
+Set the initial integer value for live knob
+.IR b .
+Overrides the preset default.
+.TP
+.BI \-c " n"
+Set the initial integer value for live knob
+.IR c .
+Overrides the preset default.
+.TP
+.BR \-w ", " \-\-wav " " \fIfile\fR
+Render audio directly to a standard 8-bit unsigned mono RIFF WAVE file and exit
+without opening the terminal interface.
+.TP
+.BR \-d ", " \-\-duration " " \fIsec\fR
+Duration in seconds of audio to export when writing a WAV file with
+.BR \-w .
+Default is 10.
+.TP
+.BR \-s ", " \-\-screen " " \fIcols\fRx\fIrows\fR
+Override terminal screen dimensions to
+.I cols
+columns by
+.I rows
+rows for rendering.
+.TP
+.BR \-l ", " \-\-list
+List built-in preset tunes, authors, default knob settings, and formulas,
+then exit.
+.TP
+.BR \-n ", " \-\-no\-audio
+Run the visualizer in the terminal without outputting sound.
+Useful in environments without audio hardware or over remote connections.
+.TP
+.BR \-h ", " \-\-help
+Show command-line options and exit.
+.SH KEYS
+.SS Normal Mode
+.TP
+.BR n ", " Right
+Next preset tune.
+.TP
+.BR p ", " Left
+Previous preset tune.
+.TP
+.BR 1 " \(en " 0
+Select preset tune 1 to 10 directly (0 chooses preset 10).
+.TP
+.B Space
+Pause or resume audio playback and oscilloscope animation.
+.TP
+.B r
+Reset the sample counter
+.I t
+to zero.
+.TP
+.B v
+Toggle visualizer between the braille oscilloscope and the 8-bit bit-plane
+waterfall.
+.TP
+.BR a ", " A
+Increment or decrement knob
+.IR a .
+.TP
+.BR b ", " B
+Increment or decrement knob
+.IR b .
+.TP
+.BR c ", " C
+Increment or decrement knob
+.IR c .
+.TP
+.BR + ", " \-
+Increase or decrease the playback sample rate.
+.TP
+.B .
+Advance playback by one frame while paused.
+.TP
+.BR e ", " /
+Enter live formula editing mode.
+.TP
+.B w
+Write the current formula audio to a WAV file.
+.TP
+.BR q ", " Esc
+Quit
+.BR cyk .
+.SS Edit Mode
+.TP
+.B Backspace
+Delete the character before the cursor.
+.TP
+.B C-u
+Clear the formula line.
+.TP
+.B Enter
+Accept the edited formula, update playback seamlessly, and return to normal
+mode.
+.TP
+.B Esc
+Cancel editing, restore the previous formula, and return to normal mode.
+.SH FORMULAS
+A bytebeat formula is an arithmetic expression over integer values.
+Expressions are evaluated using 64-bit signed arithmetic.
+The lowest 8 bits of the resulting integer form an unsigned 8-bit PCM audio
+sample (0 to 255).
+.SS Operators
+Operators are listed from highest to lowest precedence:
+.TP
+.BR \- ", " ~ ", " !
+Unary prefix operators: arithmetic negation, bitwise NOT (one's complement),
+and logical NOT (yielding 1 if zero, and 0 otherwise).
+.TP
+.BR * ", " / ", " %
+Multiplication, division, and modulo (remainder).
+Division and modulo by zero yield 0 rather than terminating execution or
+trapping.
+Dividing the minimum 64-bit signed integer by \-1 also yields 0 to prevent
+arithmetic overflow.
+.TP
+.BR + ", " \-
+Addition and subtraction.
+.TP
+.BR << ", " >>
+Bitwise left and right shift.
+The shift count is masked to its low 6 bits (0 to 63).
+.TP
+.BR < ", " <= ", " > ", " >=
+Relational comparisons: less than, less than or equal, greater than, and
+greater than or equal.
+Evaluate to 1 if true, and 0 otherwise.
+.TP
+.BR == ", " !=
+Equality and inequality comparisons.
+Evaluate to 1 if true, and 0 otherwise.
+.TP
+.B &
+Bitwise AND.
+.TP
+.B ^
+Bitwise XOR.
+.TP
+.B |
+Bitwise OR.
+.PP
+Parentheses
+.BR ( )
+group subexpressions and override default operator precedence.
+.SS Variables
+.TP
+.B t
+The sample counter.
+Starts at zero and increments by one for each audio sample generated (by default,
+8,000 times a second).
+.TP
+.BR a ", " b ", " c
+Live parameter knobs.
+Each knob holds a 64-bit integer, modified during playback with keyboard
+controls or initialized on the command line.
+.PP
+Variable names are case-insensitive:
+.BR t ,
+.BR a ,
+.BR b ,
+.BR c ,
+.BR T ,
+.BR A ,
+.BR B ,
+and
+.B C
+are accepted.
+.SS Constants
+Constants can be written in decimal
+.RB ( 42 ,
+.BR 8000 )
+or in hexadecimal with a
+.B 0x
+or
+.B 0X
+prefix
+.RB ( 0x2a ,
+.BR 0xff ).
+.SH EXAMPLES
+Start the interactive synthesizer with the default preset tune:
+.RS 4
+.B cyk
+.RE
+.PP
+Play preset 3 with knob
+.I a
+tuned to 7:
+.RS 4
+.B cyk \-p 3 \-a 7
+.RE
+.PP
+Play a custom formula directly from the command line:
+.RS 4
+.B cyk \(dqt * (42 & t >> 10)\(dq
+.RE
+.PP
+Play a custom formula with initial knob values:
+.RS 4
+.B cyk \-a 5 \-b 9 \(dqt * (a & t >> b)\(dq
+.RE
+.PP
+Export 10 seconds of preset 2 to an 8-bit mono WAV file:
+.RS 4
+.B cyk \-p 2 \-w crowd.wav \-d 10
+.RE
+.PP
+Export 15 seconds of a custom formula to a WAV file without terminal display:
+.RS 4
+.B cyk \-w space.wav \-d 15 \(dq((t * (t >> 8 | t >> 9) & 46 & t >> 8)) ^ (t & t >> 13 | t >> 6)\(dq
+.RE
+.SH SEE ALSO
+.BR raz (1)

@@ -1,0 +1,42 @@
+// test/check.cn: verifies cyk's deterministic headless screen rendering,
+// preset listing, and WAV audio recording. Run from cyk's top directory
+// via concha test/check.cn.
+
+errexit := true
+pipefail := true
+
+record := (length(args) > 0) and (args[0] = 'record')
+
+procedure fail(msg);
+begin
+  echo "check: $msg" >&2
+  halt(1)
+end;
+
+// 1. Run each headless screen test case and compare against .expect
+cases := ['melody', 'bits', 'crowd', 'knobs', 'edit_ok', 'edit_err']
+for c in cases do begin
+  argList := split(trim(`cat test/cases/$c.args`))
+  build/cyk $argList < test/cases/$c.keys > build/$c.out
+  if record then
+    cp build/$c.out test/cases/$c.expect
+  else begin
+    cmp -s build/$c.out test/cases/$c.expect
+    if status <> 0 then fail("screen mismatch in test/cases/" + c)
+  end
+end
+
+// 2. Test preset listing (-l)
+build/cyk -l > build/presets.out
+numPresets := int(trim(`grep -c '^[0-9]' build/presets.out`))
+if numPresets <> 10 then fail("expected 10 presets listed, got " + str(numPresets))
+
+// 3. Test WAV recording (-w ... -d 1)
+rm -f build/test.wav
+build/cyk -w build/test.wav -d 1
+if not isfile('build/test.wav') then fail("WAV file build/test.wav was not created")
+wavSize := int(trim(`wc -c < build/test.wav`))
+if wavSize <> 8044 then fail("expected WAV size 8044, got " + str(wavSize))
+rm -f build/test.wav
+
+writeln('check: all tests passed')

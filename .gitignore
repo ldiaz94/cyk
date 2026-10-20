@@ -1,0 +1,4 @@
+/.sauce/
+/build/
+/site/public/
+*.wav
