@@ -1,13 +1,197 @@
 // test/cast.cn: deterministic asciinema recording and GIF generator for cyk.
 //
-//   robbie cast   or   concha test/cast.cn
+//   robbie cast   or   concha test/cast.cn   (from cyk's top directory)
 //
-// Runs build/cyk across a scripted tour of frames:
+// Runs build/cyk, headless, on a scripted tour of frames:
 //   - stepping t on "42 Melody"
 //   - toggling v to the bit-plane waterfall
 //   - switching n to "Crowd" and "Sierpinski Harmony"
 //   - tweaking knobs a/b
-//   - live-editing a custom formula in e mode with syntax error underline
-// Writes doc/demo.cast and doc/img/demo.gif.
+//   - live-editing a custom formula in e mode, with a syntax error underlined
+// Each step types one more key, so frame k is cyk's screen after the first k
+// keys. Writes doc/demo.cast (asciinema v2) and doc/img/demo.gif (each frame
+// drawn as ANSI -> SVG -> PNG, then joined by ffmpeg). Nothing here reads the
+// clock, so the output is the same on every run.
+//
+// It depends on cyk's -s, rsvg-convert and ffmpeg. The cast holds the
+// box-drawing and braille characters as UTF-8, not as \u escapes.
 
-python3 test/cast.py
+errexit := true
+pipefail := true
+
+Cols := 72
+Rows := 18
+Work := 'build/cast'
+CastFile := 'doc/demo.cast'
+GifFile := 'doc/img/demo.gif'
+Esc := chr(27)
+Ctrl_U := chr(21)
+Newline := chr(10)
+
+keys := ''      // every key typed so far
+time := 0       // centiseconds since the start
+frame := 0      // frames made so far
+
+// the number cs/100 as a decimal with at least one digit after the point
+function seconds(cs);
+var frac;
+begin
+  frac := str(cs mod 100)
+  if length(frac) = 1 then frac := '0' + frac
+  if copy(frac, 2, 1) = '0' then frac := copy(frac, 1, 1)
+  result := str(cs div 100) + '.' + frac
+end;
+
+// s as the inside of a JSON string
+function jsonEscape(s);
+begin
+  s := replace(s, '\', '\\')
+  s := replace(s, '"', '\"')
+  result := replace(s, Esc, '\u001b')
+end;
+
+// s with the characters XML gives a meaning written as entities
+function xmlEscape(s);
+begin
+  s := replace(s, '&', '&amp;')
+  s := replace(s, '<', '&lt;')
+  s := replace(s, '>', '&gt;')
+  s := replace(s, '"', '&quot;')
+  result := replace(s, '''', '&#x27;')
+end;
+
+// one <tspan> of text under the colour and weight an SGR code sets
+procedure span(code, text);
+var fill, bold;
+begin
+  case code of
+    '1':    begin fill := '#ffffff'; bold := true end;
+    '2':    begin fill := '#586e75'; bold := false end;
+    '36':   begin fill := '#00e5ff'; bold := false end;
+    '31;1': begin fill := '#ff5555'; bold := true end;
+    '32':   begin fill := '#3fb950'; bold := false end;
+    else    begin fill := '#c9d1d9'; bold := false end
+  end
+  write('<tspan fill="', fill, '"')
+  if bold then write(' font-weight="bold"')
+  write('>', xmlEscape(text), '</tspan>')
+end;
+
+// the <tspan>s of a line of text with SGR colour codes in it; a code is
+// ESC [ then digits and semicolons then m, and 0 clears the colour
+procedure spans(line);
+var parts, i, part, m, code;
+begin
+  parts := split(line, Esc)
+  if parts[0] <> '' then span('0', parts[0])
+  for i := 1 to length(parts) - 1 do begin
+    part := parts[i]
+    m := pos('m', part)
+    code := copy(part, 2, m - 2)
+    if copy(part, m + 1) <> '' then span(code, copy(part, m + 1))
+  end
+end;
+
+// the frame's screen, lines of text, as an SVG window
+procedure svg(screen);
+var i, y;
+begin
+  writeln('<svg xmlns="http://www.w3.org/2000/svg" width="720" height="416" viewBox="0 0 720 416">')
+  writeln('  <rect width="100%" height="100%" rx="8" fill="#10141a" stroke="#253240" stroke-width="1"/>')
+  writeln('  <circle cx="24" cy="20" r="5" fill="#ff5f56"/>')
+  writeln('  <circle cx="40" cy="20" r="5" fill="#ffbd2e"/>')
+  writeln('  <circle cx="56" cy="20" r="5" fill="#27c93f"/>')
+  writeln('  <text x="360" y="24" font-family="DejaVu Sans Mono" font-size="12" fill="#7d8590" text-anchor="middle">cyk — bytebeat studio</text>')
+  for i := 0 to length(screen) - 1 do begin
+    // y = 56 + 19.5 i, worked out in tenths
+    y := 560 + 195 * i
+    write('  <text x="35" y="', y div 10, '.', y mod 10)
+    write('" font-family="DejaVu Sans Mono, monospace" font-size="14.5" xml:space="preserve">')
+    spans(screen[i])
+    writeln('</text>')
+  end
+  writeln('</svg>')
+end;
+
+// type one more key, show cyk's screen for cs centiseconds: one cast event
+// and one GIF frame
+procedure step(key, cs);
+var screen, png, text, i;
+begin
+  keys := keys + key
+  begin write(keys) end > $(Work + '/keys')
+  screen := lines(`env -i CYK_COLOR=1 PATH=$PATH build/cyk -s $(Cols)x$(Rows) < $Work/keys`)
+  // the home sequence, then the lines, each ended by CR LF; the first frame clears the screen too
+  text := Esc + '[H'
+  if frame = 0 then text := Esc + '[2J' + text
+  text := jsonEscape(text)
+  for i := 0 to length(screen) - 1 do text := text + jsonEscape(screen[i]) + '\r\n'
+  begin
+    writeln('[', seconds(time), ', "o", "', text, '"]')
+  end >> $CastFile
+  png := Work + '/frame' + str(frame) + '.png'
+  begin svg(screen) end > $(Work + '/frame.svg')
+  rsvg-convert $(Work + '/frame.svg') -o $png
+  begin
+    writeln('file ', basename(png))
+    writeln('duration ', seconds(cs))
+  end >> $(Work + '/concat.txt')
+  inc(frame)
+  inc(time, cs)
+end;
+
+procedure main;
+begin
+  rm -rf $Work
+  mkdir -p $Work doc/img
+  begin
+    writeln('{"version": 2, "width": ', Cols, ', "height": ', Rows,
+      ', "timestamp": 1700000000, "env": {"TERM": "xterm-256color"}}')
+  end > $CastFile
+
+  // 1. The first frame: "42 Melody", the scope, t = 0
+  step('', 60)
+  // 2. Stepping t
+  for i := 1 to 9 do step('.', 15)
+  step('.', 60)
+  // 3. v: the bit-plane waterfall
+  step('v', 40)
+  step('.', 20); step('.', 20); step('.', 20); step('.', 60)
+  // 4. n: "Crowd"
+  step('n', 40)
+  step('.', 20); step('.', 20)
+  step('v', 40)
+  step('.', 20); step('.', 50)
+  // 5. n: "Sierpinski Harmony"
+  step('n', 40)
+  step('.', 20); step('.', 20); step('.', 20); step('.', 50)
+  // 6. Knobs a and b
+  step('a', 25); step('a', 30); step('b', 25); step('b', 30)
+  step('.', 20); step('.', 20); step('.', 50)
+  // 7. e: a formula typed live; the "(" is a syntax error, underlined
+  step('e', 35)
+  step(Ctrl_U, 35)
+  step('t', 15); step(' ', 10); step('*', 12); step(' ', 10)
+  step('(', 80)
+  step('t', 12); step(' ', 8); step('>', 8); step('>', 8); step(' ', 8)
+  step('8', 12); step(' ', 8); step('|', 12); step(' ', 8)
+  step('t', 12); step(' ', 8); step('>', 8); step('>', 8); step(' ', 8)
+  step('9', 12)
+  step(')', 45)             // a whole formula
+  step(Newline, 45)         // back to normal mode
+  for i := 1 to 5 do step('.', 20)
+  step('.', 140)            // the last frame, held
+
+  // ffmpeg's concat needs the last file named again, without a duration
+  begin writeln('file frame', frame - 1, '.png') end >> $(Work + '/concat.txt')
+
+  // A palette of the 32 colours the frames use, then the GIF drawn with it
+  cd $Work
+  ffmpeg -y -f concat -i concat.txt -vf palettegen=max_colors=32 palette.png >/dev/null 2>&1
+  ffmpeg -y -f concat -i concat.txt -i palette.png -lavfi paletteuse=dither=none:diff_mode=rectangle ../../$GifFile >/dev/null 2>&1
+  cd ../..
+  rm -rf $Work
+  writeln(CastFile, ': ', frame, ' events, ', seconds(time), ' s; ', GifFile)
+end;
+
+main
