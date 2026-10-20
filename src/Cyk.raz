@@ -185,6 +185,9 @@ begin
         if c = '[' then
             escState := 2;
             return;
+        elsif c = 'O' then
+            escState := 3;
+            return;
         else
             escState := 0;
             if s.editing then
@@ -194,12 +197,17 @@ begin
             end;
             if c = 27 then return; end;
         end;
-    elsif escState = 2 then
+    elsif escState >= 2 then
+        (* CSI (2) skips parameter bytes 0x20..0x3F until a final byte;
+           SS3 (3) takes one final byte. Arrows act only outside edit mode. *)
+        if (escState = 2) and (c >= 32) and (c <= 63) then return; end;
         escState := 0;
-        if c = 'C' then
-            loadTune(s, (s.curTune + 1) mod 10);
-        elsif c = 'D' then
-            loadTune(s, (s.curTune + 9) mod 10);
+        if not s.editing then
+            if c = 'C' then
+                loadTune(s, (s.curTune + 1) mod LEN(Beat.Tunes));
+            elsif c = 'D' then
+                loadTune(s, (s.curTune + LEN(Beat.Tunes) - 1) mod LEN(Beat.Tunes));
+            end;
         end;
         return;
     end;
@@ -235,13 +243,13 @@ begin
     | 'q':
         running := false;
     | 'n':
-        loadTune(s, (s.curTune + 1) mod 10);
+        loadTune(s, (s.curTune + 1) mod LEN(Beat.Tunes));
     | 'p':
-        loadTune(s, (s.curTune + 9) mod 10);
+        loadTune(s, (s.curTune + LEN(Beat.Tunes) - 1) mod LEN(Beat.Tunes));
     | '1', '2', '3', '4', '5', '6', '7', '8', '9':
         loadTune(s, INT(c - '1'));
     | '0':
-        loadTune(s, 9);
+        loadTune(s, LEN(Beat.Tunes) - 1);
     | ' ':
         s.paused := not s.paused;
     | 'r':
@@ -280,119 +288,145 @@ begin
     end;
 end;
 
-(* Renders one complete studio screen frame of cols by rows into b. *)
-proc render(const s: State; var b: Buf.Buf; cols, rows: INT; color, raw: BOOL);
-var
-    samples: [FrameSamples]U8;
-    leftBuf, rightBuf, kLeft, kMid, kRight: Buf.Buf;
-    minVal, maxVal, avgVal: INT;
-    dispLeft, dispRight, gap, gap1, gap2, i, r, waveRows, waveCols, maxW: INT;
-    lLen, mLen, rLen, caretOffset: INT;
-    viewStr, playStr, formula: []U8;
+const
+    FormulaCol = 9;      (* column where formula text starts: 2 spaces and "f(t) = " *)
+    CaretMinRows = 14;   (* fewest screen rows that have room for the caret row *)
+
+(* Writes n spaces to b. *)
+proc pad(var b: Buf.Buf; n: INT);
+var i: INT;
 begin
-    Beat.fill(s.prog, s.t, s.a, s.b, s.c, samples);
-    minVal, maxVal, avgVal := Wave.stats(samples);
+    for i := 1 to n do Buf.add(b, ' '); end;
+end;
 
-    Buf.init(leftBuf, Heap.heap);
-    defer Buf.done(leftBuf);
-    Buf.init(rightBuf, Heap.heap);
-    defer Buf.done(rightBuf);
-
-    Fmt.write(leftBuf, "cyk  [{}/10] {} — {}",
-        [Fmt.int(s.curTune + 1), Fmt.str(Beat.Tunes[s.curTune].name), Fmt.str(Beat.Tunes[s.curTune].author)]);
-    dispLeft := leftBuf.len - 2;
-
-    if s.viewMode = ViewScope then viewStr := "scope"; else viewStr := "bits "; end;
-    if s.paused then playStr := "pause"; else playStr := "play"; end;
-    Fmt.write(rightBuf, "{}  {} Hz  {}", [Fmt.str(viewStr), Fmt.int(s.rate), Fmt.str(playStr)]);
-    dispRight := rightBuf.len;
-
-    (* Row 1: Header *)
+(* Writes the play state word, yellow when paused and green when playing. *)
+proc playWord(var b: Buf.Buf; color, paused: BOOL; word: []U8);
+begin
     if color then
-        colBold(b, color); Buf.str(b, "cyk"); colReset(b, color);
-        Buf.str(b, Buf.bytes(leftBuf)[3..leftBuf.len]);
-    else
-        Buf.str(b, Buf.bytes(leftBuf));
+        if paused then Buf.str(b, "\x1b[33m"); else Buf.str(b, "\x1b[32m"); end;
     end;
-    if dispLeft + dispRight < cols then
-        gap := cols - dispLeft - dispRight;
-        for i := 0 to gap - 1 do Buf.add(b, ' '); end;
-    else
-        Buf.add(b, ' ');
+    Buf.str(b, word);
+    colReset(b, color);
+end;
+
+(* Returns how many formula characters fit on a screen cols wide. *)
+proc formulaWidth(cols: INT): INT;
+begin
+    if cols - FormulaCol < 1 then return 1; end;
+    return cols - FormulaCol;
+end;
+
+(* Returns the screen column of the error caret, or -1 when there is no caret row. *)
+proc caretCol(const s: State; cols, rows: INT): INT;
+var offset: INT;
+begin
+    if not (s.editing and (s.errPos >= 0) and (rows >= CaretMinRows)) then return -1; end;
+    offset := s.errPos;
+    if s.editLen > formulaWidth(cols) then
+        offset := offset - (s.editLen - formulaWidth(cols));
     end;
-    if color then
-        Buf.str(b, viewStr);
-        Buf.str(b, "  ");
-        Fmt.write(b, "{} Hz  ", [Fmt.int(s.rate)]);
-        if s.paused then
-            Buf.str(b, "\x1b[33m");
-            Buf.str(b, playStr);
-            Buf.str(b, "\x1b[0m");
-        else
-            Buf.str(b, "\x1b[32m");
-            Buf.str(b, playStr);
-            Buf.str(b, "\x1b[0m");
-        end;
+    if (offset >= 0) and (FormulaCol + offset < cols) then return FormulaCol + offset; end;
+    return -1;
+end;
+
+(* Row 1: preset name on the left, view, rate and play state on the right. *)
+proc headerRow(const s: State; var b: Buf.Buf; cols: INT; color, raw: BOOL);
+var
+    left, right: Buf.Buf;
+    leftCols: INT;
+    view, play: []U8;
+begin
+    Buf.init(left, Heap.heap);
+    defer Buf.done(left);
+    Buf.init(right, Heap.heap);
+    defer Buf.done(right);
+
+    Fmt.write(left, "cyk  [{}/{}] {} — {}",
+        [Fmt.int(s.curTune + 1), Fmt.int(LEN(Beat.Tunes)),
+         Fmt.str(Beat.Tunes[s.curTune].name), Fmt.str(Beat.Tunes[s.curTune].author)]);
+    leftCols := left.len - 2; (* the dash is 3 bytes but 1 column *)
+    if s.viewMode = ViewScope then view := "scope"; else view := "bits "; end;
+    if s.paused then play := "pause"; else play := "play"; end;
+    Fmt.write(right, "{}  {} Hz  {}", [Fmt.str(view), Fmt.int(s.rate), Fmt.str(play)]);
+
+    colBold(b, color); Buf.str(b, "cyk"); colReset(b, color);
+    Buf.str(b, Buf.bytes(left)[3..left.len]);
+    if leftCols + right.len < cols then
+        pad(b, cols - leftCols - right.len);
     else
-        Buf.str(b, Buf.bytes(rightBuf));
+        pad(b, 1);
     end;
+    Buf.str(b, Buf.bytes(right)[0..right.len - LEN(play)]);
+    playWord(b, color, s.paused, play);
     endLine(b, raw);
+end;
 
-    (* Row 2: Top divider *)
+(* A full-width horizontal rule. *)
+proc divider(var b: Buf.Buf; cols: INT; color, raw: BOOL);
+var i: INT;
+begin
     colDim(b, color);
-    for i := 0 to cols - 1 do Buf.str(b, "─"); end;
+    for i := 1 to cols do Buf.str(b, "─"); end;
     colReset(b, color);
     endLine(b, raw);
+end;
 
-    (* Row 3: Formula line *)
+(* Row 3: the formula, scrolled to show its end while editing. *)
+proc formulaRow(const s: State; var b: Buf.Buf; cols: INT; color, raw: BOOL);
+var
+    formula: []U8;
+    width: INT;
+begin
+    formula := s.editBuf[0..s.editLen];
+    width := formulaWidth(cols);
     Buf.str(b, "  ");
     colBold(b, color); Buf.str(b, "f(t) = "); colReset(b, color);
-    formula := s.editBuf[0..s.editLen];
-    maxW := cols - 9;
-    if maxW < 1 then maxW := 1; end;
-    if s.editing and (s.editLen > maxW) then
-        Buf.str(b, formula[s.editLen - maxW..s.editLen]);
-    elsif LEN(formula) > maxW then
-        Buf.str(b, formula[0..maxW]);
+    if s.editing and (s.editLen > width) then
+        Buf.str(b, formula[s.editLen - width..s.editLen]);
+    elsif LEN(formula) > width then
+        Buf.str(b, formula[0..width]);
     else
         Buf.str(b, formula);
     end;
     endLine(b, raw);
+end;
 
-    (* Caret row if editing formula has a syntax error *)
-    if s.editing and (s.errPos >= 0) and (rows >= 14) then
-        caretOffset := s.errPos;
-        if s.editLen > maxW then
-            caretOffset := s.errPos - (s.editLen - maxW);
-        end;
-        if (caretOffset >= 0) and (9 + caretOffset < cols) then
-            for i := 0 to 9 + caretOffset - 1 do
-                Buf.add(b, ' ');
-            end;
-            colErr(b, color);
-            Buf.add(b, '^');
-            colReset(b, color);
-            endLine(b, raw);
-        end;
-    end;
+(* The caret row: a ^ under the character where the formula fails to parse. *)
+proc caretRow(var b: Buf.Buf; col: INT; color, raw: BOOL);
+begin
+    pad(b, col);
+    colErr(b, color);
+    Buf.add(b, '^');
+    colReset(b, color);
+    endLine(b, raw);
+end;
 
-    (* Row 4: Knobs and stats *)
-    Buf.init(kLeft, Heap.heap);
-    defer Buf.done(kLeft);
-    Buf.init(kMid, Heap.heap);
-    defer Buf.done(kMid);
-    Buf.init(kRight, Heap.heap);
-    defer Buf.done(kRight);
+(* A dim label followed by a plain number. *)
+proc labelled(var b: Buf.Buf; color: BOOL; label: []U8; value: I64);
+begin
+    colDim(b, color); Buf.str(b, label); colReset(b, color);
+    Fmt.write(b, "{}", [Fmt.int(value)]);
+end;
 
-    Fmt.write(kLeft, "  knobs  a = {}   b = {}   c = {}", [Fmt.int(s.a), Fmt.int(s.b), Fmt.int(s.c)]);
-    Fmt.write(kMid, "t = {}", [Fmt.int(s.t)]);
-    Fmt.write(kRight, "min {} max {} avg {}", [Fmt.int(minVal), Fmt.int(maxVal), Fmt.int(avgVal)]);
+(* Row 4: knobs at the left, time in the middle, sample stats at the right. *)
+proc knobsRow(const s: State; var b: Buf.Buf; cols, minVal, maxVal, avgVal: INT; color, raw: BOOL);
+var
+    left, mid, right: Buf.Buf;
+    gap, gap1, gap2: INT;
+begin
+    Buf.init(left, Heap.heap);
+    defer Buf.done(left);
+    Buf.init(mid, Heap.heap);
+    defer Buf.done(mid);
+    Buf.init(right, Heap.heap);
+    defer Buf.done(right);
 
-    lLen := kLeft.len;
-    mLen := kMid.len;
-    rLen := kRight.len;
-    if lLen + mLen + rLen + 2 <= cols then
-        gap := cols - lLen - mLen - rLen;
+    (* plain copies, only to measure the widths *)
+    Fmt.write(left, "  knobs  a = {}   b = {}   c = {}", [Fmt.int(s.a), Fmt.int(s.b), Fmt.int(s.c)]);
+    Fmt.write(mid, "t = {}", [Fmt.int(s.t)]);
+    Fmt.write(right, "min {} max {} avg {}", [Fmt.int(minVal), Fmt.int(maxVal), Fmt.int(avgVal)]);
+    if left.len + mid.len + right.len + 2 <= cols then
+        gap := cols - left.len - mid.len - right.len;
         gap1 := gap div 2;
         gap2 := gap - gap1;
     else
@@ -400,69 +434,43 @@ begin
         gap2 := 1;
     end;
 
-    if color then
-        Buf.str(b, "  ");
-        colDim(b, color); Buf.str(b, "knobs  "); colReset(b, color);
-        Fmt.write(b, "a = {}   b = {}   c = {}", [Fmt.int(s.a), Fmt.int(s.b), Fmt.int(s.c)]);
-        for i := 0 to gap1 - 1 do Buf.add(b, ' '); end;
-        colDim(b, color); Buf.str(b, "t = "); colReset(b, color);
-        Fmt.write(b, "{}", [Fmt.int(s.t)]);
-        for i := 0 to gap2 - 1 do Buf.add(b, ' '); end;
-        colDim(b, color); Buf.str(b, "min "); colReset(b, color);
-        Fmt.write(b, "{} ", [Fmt.int(minVal)]);
-        colDim(b, color); Buf.str(b, "max "); colReset(b, color);
-        Fmt.write(b, "{} ", [Fmt.int(maxVal)]);
-        colDim(b, color); Buf.str(b, "avg "); colReset(b, color);
-        Fmt.write(b, "{}", [Fmt.int(avgVal)]);
-    else
-        Buf.str(b, Buf.bytes(kLeft));
-        for i := 0 to gap1 - 1 do Buf.add(b, ' '); end;
-        Buf.str(b, Buf.bytes(kMid));
-        for i := 0 to gap2 - 1 do Buf.add(b, ' '); end;
-        Buf.str(b, Buf.bytes(kRight));
-    end;
+    Buf.str(b, "  ");
+    colDim(b, color); Buf.str(b, "knobs  "); colReset(b, color);
+    Fmt.write(b, "a = {}   b = {}   c = {}", [Fmt.int(s.a), Fmt.int(s.b), Fmt.int(s.c)]);
+    pad(b, gap1);
+    labelled(b, color, "t = ", s.t);
+    pad(b, gap2);
+    labelled(b, color, "min ", minVal);
+    Buf.add(b, ' ');
+    labelled(b, color, "max ", maxVal);
+    Buf.add(b, ' ');
+    labelled(b, color, "avg ", avgVal);
     endLine(b, raw);
+end;
 
-    (* Row 5: Middle divider *)
-    colDim(b, color);
-    for i := 0 to cols - 1 do Buf.str(b, "─"); end;
-    colReset(b, color);
-    endLine(b, raw);
-
-    (* Rows 6 .. rows - 2: Waveform *)
-    waveRows := rows - 7;
-    if s.editing and (s.errPos >= 0) and (rows >= 14) then
-        caretOffset := s.errPos;
-        if s.editLen > maxW then
-            caretOffset := s.errPos - (s.editLen - maxW);
-        end;
-        if (caretOffset >= 0) and (9 + caretOffset < cols) then
-            DEC(waveRows);
-        end;
-    end;
-    if waveRows < 1 then waveRows := 1; end;
+(* The waveform: count rows of the scope or bit-plane view. *)
+proc waveRows(const s: State; var b: Buf.Buf; const samples: [FrameSamples]U8;
+        cols, count: INT; color, raw: BOOL);
+var r, waveCols: INT;
+begin
     waveCols := cols - 4;
     if waveCols < 4 then waveCols := 4; end;
-
-    for r := 0 to waveRows - 1 do
+    for r := 0 to count - 1 do
         Buf.str(b, "  ");
         colWave(b, color);
         if s.viewMode = ViewScope then
-            Wave.scopeRow(b, samples, waveCols, waveRows, r);
+            Wave.scopeRow(b, samples, waveCols, count, r);
         else
-            Wave.bitsRow(b, samples, waveCols, waveRows, r);
+            Wave.bitsRow(b, samples, waveCols, count, r);
         end;
         colReset(b, color);
         endLine(b, raw);
     end;
+end;
 
-    (* Row rows - 1: Bottom divider *)
-    colDim(b, color);
-    for i := 0 to cols - 1 do Buf.str(b, "─"); end;
-    colReset(b, color);
-    endLine(b, raw);
-
-    (* Row rows: Footer *)
+(* The last row: edit hint, error, status message or key help. *)
+proc footerRow(const s: State; var b: Buf.Buf; color, raw: BOOL);
+begin
     if s.editing then
         if LEN(s.errMsg) > 0 then
             colErr(b, color);
@@ -487,6 +495,30 @@ begin
         colReset(b, color);
     end;
     endFrame(b, raw);
+end;
+
+(* Renders one complete studio screen frame of cols by rows into b. *)
+proc render(const s: State; var b: Buf.Buf; cols, rows: INT; color, raw: BOOL);
+var
+    samples: [FrameSamples]U8;
+    minVal, maxVal, avgVal, caret, count: INT;
+begin
+    Beat.fill(s.prog, s.t, s.a, s.b, s.c, samples);
+    minVal, maxVal, avgVal := Wave.stats(samples);
+    caret := caretCol(s, cols, rows);
+    count := rows - 7;
+    if caret >= 0 then DEC(count); end;
+    if count < 1 then count := 1; end;
+
+    headerRow(s, b, cols, color, raw);
+    divider(b, cols, color, raw);
+    formulaRow(s, b, cols, color, raw);
+    if caret >= 0 then caretRow(b, caret, color, raw); end;
+    knobsRow(s, b, cols, minVal, maxVal, avgVal, color, raw);
+    divider(b, cols, color, raw);
+    waveRows(s, b, samples, cols, count, color, raw);
+    divider(b, cols, color, raw);
+    footerRow(s, b, color, raw);
 end;
 
 (* Spawns an audio player child process with stdin connected to a pipe. *)
@@ -575,16 +607,71 @@ begin
     return 0;
 end;
 
+const
+    FrameMs = 33;        (* pause between frames; the clock, not this, paces audio *)
+    LeadMs = 80;         (* audio written ahead of the clock, so the player never starves *)
+    ChunkSamples = 1024; (* samples evaluated and written at a time *)
+
+(* Writes all of data to fd, retrying after EINTR and short writes.
+   Returns false on a real error. *)
+proc writeAll(fd: INT; data: []U8): BOOL;
+var n, done: INT;
+begin
+    done := 0;
+    while done < LEN(data) do
+        n := Sys.write(fd, data[done..LEN(data)]);
+        if n = Sys.errIntr then
+            continue;
+        elsif n <= 0 then
+            return false;
+        end;
+        done := done + n;
+    end;
+    return true;
+end;
+
+(* The samples the clock has moved on since the reading last, at rate.
+   last moves on by the time those samples take, so the fraction of a
+   sample left over counts in the next call. *)
+proc samplesSince(var last: I64; rate: INT): I64;
+var n: I64;
+begin
+    n := (Sys.clock() - last) * rate div 1000000000;
+    last := last + n * 1000000000 div rate;
+    return n;
+end;
+
+(* Evaluates samples from s.t up to target and writes them to audioFd
+   (when it is open); s.t ends at target. Returns false if audio failed. *)
+proc playTo(var s: State; audioFd: INT; target: I64): BOOL;
+var
+    chunk: [ChunkSamples]U8;
+    n: INT;
+begin
+    while s.t < target do
+        n := ChunkSamples;
+        if target - s.t < n then n := INT(target - s.t); end;
+        if audioFd >= 0 then
+            Beat.fill(s.prog, s.t, s.a, s.b, s.c, chunk[0..n]);
+            if not writeAll(audioFd, chunk[0..n]) then
+                s.t := target;
+                return false;
+            end;
+        end;
+        s.t := s.t + n;
+    end;
+    return true;
+end;
+
 (* Runs the interactive bytebeat studio terminal loop. *)
 proc runInteractive(var s: State; noAudio: BOOL): INT;
 var
     b: Buf.Buf;
     keyBuf: [32]U8;
-    samples: [FrameSamples]U8;
     cols, rows, tc, tr: INT;
-    n, nw, i, escState, audioFd, playerPid, lastAudioRate: INT;
+    n, i, escState, audioFd, playerPid, lastAudioRate: INT;
     running, raw, useColor: BOOL;
-    sleepMs: INT;
+    last: I64;
 begin
     (* The loop takes the terminal's size each frame, when it has one. *)
     cols := DefaultCols;
@@ -614,6 +701,11 @@ begin
 
     running := true;
     escState := 0;
+    (* Time moves on by what the clock says since the last frame, not
+       from a fixed start, so keys may set t freely. The player is kept
+       LeadMs ahead, written once when it starts. *)
+    last := Sys.clock();
+    _ := playTo(s, audioFd, s.t + s.rate * LeadMs div 1000);
 
     while running do
         tc, tr := Sys.termSize(Sys.stdout);
@@ -645,18 +737,14 @@ begin
             stopAudio(audioFd, playerPid);
             audioFd, playerPid := startAudio(s.rate);
             lastAudioRate := s.rate;
+            _ := playTo(s, audioFd, s.t + s.rate * LeadMs div 1000);
         end;
 
-        Beat.fill(s.prog, s.t, s.a, s.b, s.c, samples);
-
-        if not s.paused then
-            if audioFd >= 0 then
-                nw := Sys.write(audioFd, samples);
-                if nw <= 0 then
-                    stopAudio(audioFd, playerPid);
-                end;
-            end;
-            s.t := s.t + StepSamples;
+        (* While paused, t stands still and the clock's time is let go. *)
+        if s.paused then
+            last := Sys.clock();
+        elsif not playTo(s, audioFd, s.t + samplesSince(last, s.rate)) then
+            stopAudio(audioFd, playerPid);
         end;
 
         Buf.reset(b);
@@ -664,11 +752,7 @@ begin
         render(s, b, cols, rows, useColor, raw);
         _ := Sys.write(Sys.stdout, Buf.bytes(b));
 
-        sleepMs := FrameSamples * 1000 div s.rate;
-        if sleepMs < 10 then sleepMs := 10;
-        elsif sleepMs > 50 then sleepMs := 50;
-        end;
-        Sys.sleep(sleepMs);
+        Sys.sleep(FrameMs);
     end;
 
     if audioFd >= 0 then

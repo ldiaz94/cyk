@@ -140,7 +140,9 @@ candidate `Beat.Prog`. Only when `Beat.compile` returns `nil` does the
 candidate replace the running program; otherwise the active program
 carries on while the screen marks `errPos` with `^`. When `aplay` or
 `pw-play` is on the system (and `-n` is not given), `Cyk` pipes the
-8,000 Hz sample stream to it; otherwise it paces the oscilloscope itself.
+sample stream to it. Either way `t` follows the clock, not the frame
+rate: each frame plays the samples the clock has moved on since the
+last, and the player is kept 80 ms ahead so it never runs dry.
 
 ## Reading the code
 
@@ -171,7 +173,7 @@ lines:
 |---|---:|
 | [`src/Beat.raz`](src/Beat.raz) | 625, its test and 10 presets included |
 | [`src/Wave.raz`](src/Wave.raz) | 284, its test included |
-| [`src/Cyk.raz`](src/Cyk.raz) | 680 |
+| [`src/Cyk.raz`](src/Cyk.raz) | 742 |
 
 ## Left out
 

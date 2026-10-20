@@ -14,7 +14,7 @@ begin
 end;
 
 // 1. Run each headless screen test case and compare against .expect
-cases := ['melody', 'bits', 'crowd', 'knobs', 'edit_ok', 'edit_err']
+cases := ['melody', 'bits', 'crowd', 'knobs', 'edit_ok', 'edit_err', 'edit_esc']
 for c in cases do begin
   argList := split(trim(`cat test/cases/$c.args`))
   build/cyk $argList < test/cases/$c.keys > build/$c.out
@@ -38,5 +38,32 @@ if not isfile('build/test.wav') then fail("WAV file build/test.wav was not creat
 wavSize := int(trim(`wc -c < build/test.wav`))
 if wavSize <> 8044 then fail("expected WAV size 8044, got " + str(wavSize))
 rm -f build/test.wav
+
+// 4. Drive the interactive mode (-n: no audio) in a 30x10 pseudo-terminal
+// made by script(1). The keys are typed in two steps: edit the formula
+// (a Delete key, ESC [ 3 ~, among them), then q without Enter to quit.
+// timeout ends a cyk stuck in cooked mode, and then EXIT=0 is missing.
+esc := chr(27)
+begin
+  sleep 0.5
+  printf 'e1\033[3~+1\n'
+  sleep 0.5
+  printf q
+  sleep 1
+end | timeout 2 script -qec 'stty cols 30 rows 10; build/cyk -n; echo EXIT=$?' /dev/null > build/pty.out
+out := `cat build/pty.out`
+if pos('EXIT=0', out) = 0 then fail("pty: q did not quit cyk")
+if (pos(esc + '[?25h', out) = 0) or (pos(esc + '[?7h', out) = 0) then
+  fail("pty: terminal not restored at exit")
+frames := split(out, esc + '[H')  // first chunk is setup, last may be cut
+if length(frames) < 4 then fail("pty: too few frames")
+for i := 1 to length(frames) - 2 do begin
+  rows := split(frames[i], chr(10))
+  if frames[i] = '' then continue
+  if length(rows) <> 10 then fail("pty: frame " + str(i) + " has " + str(length(rows) - 1) + " newlines, not 9")
+  for j := 0 to length(rows) - 2 do
+    if copy(rows[j], length(rows[j]), 1) <> chr(13) then fail("pty: frame " + str(i) + " has a bare newline")
+end
+if pos('~', out) > 0 then fail("pty: Delete key put ~ into the formula")
 
 writeln('check: all tests passed')
