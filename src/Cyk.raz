@@ -81,12 +81,20 @@ begin
     if color then Buf.str(b, "\x1b[0m"); end;
 end;
 
-(* Ends a line on b: a raw terminal does no output processing, so it
-   needs the carriage return that a cooked one adds to '\n'. *)
+(* Ends a line on b. On a raw terminal it first erases what an earlier,
+   longer frame left to the right, and adds the carriage return that a
+   cooked terminal adds to '\n'. *)
 proc endLine(var b: Buf.Buf; raw: BOOL);
 begin
-    if raw then Buf.add(b, '\r'); end;
+    if raw then Buf.str(b, "\x1b[K\r"); end;
     Buf.add(b, '\n');
+end;
+
+(* Ends the last line of a frame on b. A raw terminal gets no newline,
+   which on the bottom row would scroll the header off the screen. *)
+proc endFrame(var b: Buf.Buf; raw: BOOL);
+begin
+    if raw then Buf.str(b, "\x1b[K"); else Buf.add(b, '\n'); end;
 end;
 
 (* Parses terminal size in "COLSxROWS" format. *)
@@ -478,7 +486,7 @@ begin
         Buf.str(b, "  [n/p] preset  [a/A b/B c/C] knobs  [v] view  [e] edit  [w] wav  [q] quit");
         colReset(b, color);
     end;
-    endLine(b, raw);
+    endFrame(b, raw);
 end;
 
 (* Spawns an audio player child process with stdin connected to a pipe. *)
@@ -578,13 +586,9 @@ var
     running, raw, useColor: BOOL;
     sleepMs: INT;
 begin
-    cols, rows := Sys.termSize(Sys.stdout);
-    if (cols <= 0) or (rows <= 0) then
-        cols := DefaultCols;
-        rows := DefaultRows;
-    end;
-    if cols < 40 then cols := 40; end;
-    if rows < 12 then rows := 12; end;
+    (* The loop takes the terminal's size each frame, when it has one. *)
+    cols := DefaultCols;
+    rows := DefaultRows;
 
     useColor := Sys.isTerminal(Sys.stdout) and (LEN(Sys.env("NO_COLOR")) = 0);
 
@@ -600,8 +604,10 @@ begin
     raw := Sys.rawMode(Sys.stdin);
     defer Sys.restoreMode(Sys.stdin);
 
-    _ := Sys.write(Sys.stdout, "\x1b[?25l\x1b[2J\x1b[H");
-    defer _ := Sys.write(Sys.stdout, "\x1b[?25h\x1b[0m\r\n");
+    (* Hide the cursor and turn off autowrap, so that a line too long for
+       a small terminal is cut at its edge instead of scrolling. *)
+    _ := Sys.write(Sys.stdout, "\x1b[?25l\x1b[?7l\x1b[2J\x1b[H");
+    defer _ := Sys.write(Sys.stdout, "\x1b[?25h\x1b[?7h\x1b[0m\r\n");
 
     Buf.init(b, Heap.heap);
     defer Buf.done(b);
@@ -614,8 +620,6 @@ begin
         if (tc > 0) and (tr > 0) then
             cols := tc;
             rows := tr;
-            if cols < 40 then cols := 40; end;
-            if rows < 12 then rows := 12; end;
         end;
 
         while Sys.ready(Sys.stdin, 0) do
@@ -689,17 +693,17 @@ var
     i: INT;
 begin
     Opt.init(p, "cyk", [
-        Opt.usage("", "[option]... [formula]"),
+        Opt.usage("", "cyk [option]... [formula]"),
         Opt.option("", 'p', "preset", "n", "start at preset n (1..10)"),
-        Opt.option("", 'r', "rate", "hz", "sample rate in Hz (1000..48000, default 8000)"),
+        Opt.option("", 'r', "rate", "hz", "sample rate, 1000..48000 (default 8000)"),
         Opt.option("", 'a', "", "n", "set knob a"),
         Opt.option("", 'b', "", "n", "set knob b"),
         Opt.option("", 'c', "", "n", "set knob c"),
-        Opt.option("", 'w', "wav", "file", "write seconds of audio to a .wav file and exit"),
-        Opt.option("", 'd', "duration", "sec", "seconds to write with -w (1..300, default 5)"),
-        Opt.option("", 's', "screen", "colsxrows", "run keys from stdin on a screen of colsxrows and print the final frame"),
+        Opt.option("", 'w', "wav", "file", "write audio to a .wav file and exit"),
+        Opt.option("", 'd', "duration", "sec", "seconds to write with -w, 1..300 (default 5)"),
+        Opt.option("", 's', "screen", "COLSxROWS", "run keys from stdin, print the last frame"),
         Opt.option("", 'l', "list", "", "list the built-in presets and exit"),
-        Opt.option("", 'n', "no-audio", "", "visual only; do not open an audio player pipe")
+        Opt.option("", 'n', "no-audio", "", "draw only, no sound")
     ]);
 
     preset := 1;
