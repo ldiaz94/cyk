@@ -81,6 +81,14 @@ begin
     if color then Buf.str(b, "\x1b[0m"); end;
 end;
 
+(* Ends a line on b: a raw terminal does no output processing, so it
+   needs the carriage return that a cooked one adds to '\n'. *)
+proc endLine(var b: Buf.Buf; raw: BOOL);
+begin
+    if raw then Buf.add(b, '\r'); end;
+    Buf.add(b, '\n');
+end;
+
 (* Parses terminal size in "COLSxROWS" format. *)
 proc parseSize(s: []U8): (INT, INT, BOOL);
 var
@@ -265,7 +273,7 @@ begin
 end;
 
 (* Renders one complete studio screen frame of cols by rows into b. *)
-proc render(const s: State; var b: Buf.Buf; cols, rows: INT; color: BOOL);
+proc render(const s: State; var b: Buf.Buf; cols, rows: INT; color, raw: BOOL);
 var
     samples: [FrameSamples]U8;
     leftBuf, rightBuf, kLeft, kMid, kRight: Buf.Buf;
@@ -320,13 +328,13 @@ begin
     else
         Buf.str(b, Buf.bytes(rightBuf));
     end;
-    Buf.add(b, '\n');
+    endLine(b, raw);
 
     (* Row 2: Top divider *)
     colDim(b, color);
     for i := 0 to cols - 1 do Buf.str(b, "─"); end;
     colReset(b, color);
-    Buf.add(b, '\n');
+    endLine(b, raw);
 
     (* Row 3: Formula line *)
     Buf.str(b, "  ");
@@ -341,7 +349,7 @@ begin
     else
         Buf.str(b, formula);
     end;
-    Buf.add(b, '\n');
+    endLine(b, raw);
 
     (* Caret row if editing formula has a syntax error *)
     if s.editing and (s.errPos >= 0) and (rows >= 14) then
@@ -356,7 +364,7 @@ begin
             colErr(b, color);
             Buf.add(b, '^');
             colReset(b, color);
-            Buf.add(b, '\n');
+            endLine(b, raw);
         end;
     end;
 
@@ -405,13 +413,13 @@ begin
         for i := 0 to gap2 - 1 do Buf.add(b, ' '); end;
         Buf.str(b, Buf.bytes(kRight));
     end;
-    Buf.add(b, '\n');
+    endLine(b, raw);
 
     (* Row 5: Middle divider *)
     colDim(b, color);
     for i := 0 to cols - 1 do Buf.str(b, "─"); end;
     colReset(b, color);
-    Buf.add(b, '\n');
+    endLine(b, raw);
 
     (* Rows 6 .. rows - 2: Waveform *)
     waveRows := rows - 7;
@@ -437,14 +445,14 @@ begin
             Wave.bitsRow(b, samples, waveCols, waveRows, r);
         end;
         colReset(b, color);
-        Buf.add(b, '\n');
+        endLine(b, raw);
     end;
 
     (* Row rows - 1: Bottom divider *)
     colDim(b, color);
     for i := 0 to cols - 1 do Buf.str(b, "─"); end;
     colReset(b, color);
-    Buf.add(b, '\n');
+    endLine(b, raw);
 
     (* Row rows: Footer *)
     if s.editing then
@@ -470,7 +478,7 @@ begin
         Buf.str(b, "  [n/p] preset  [a/A b/B c/C] knobs  [v] view  [e] edit  [w] wav  [q] quit");
         colReset(b, color);
     end;
-    Buf.add(b, '\n');
+    endLine(b, raw);
 end;
 
 (* Spawns an audio player child process with stdin connected to a pipe. *)
@@ -554,7 +562,7 @@ begin
     if escState = 1 then
         if s.editing then s.editing := false; else running := false; end;
     end;
-    render(s, b, cols, rows, useColor);
+    render(s, b, cols, rows, useColor, false);
     Out.str(Buf.bytes(b));
     return 0;
 end;
@@ -587,13 +595,13 @@ begin
         audioFd, playerPid := startAudio(s.rate);
     end;
 
+    (* The defer stands outside any if, which would run it at once; and
+       restoring a terminal rawMode left alone changes nothing. *)
     raw := Sys.rawMode(Sys.stdin);
-    if raw then
-        defer Sys.restoreMode(Sys.stdin);
-    end;
+    defer Sys.restoreMode(Sys.stdin);
 
     _ := Sys.write(Sys.stdout, "\x1b[?25l\x1b[2J\x1b[H");
-    defer _ := Sys.write(Sys.stdout, "\x1b[?25h\x1b[0m\n");
+    defer _ := Sys.write(Sys.stdout, "\x1b[?25h\x1b[0m\r\n");
 
     Buf.init(b, Heap.heap);
     defer Buf.done(b);
@@ -649,7 +657,7 @@ begin
 
         Buf.reset(b);
         Buf.str(b, "\x1b[H");
-        render(s, b, cols, rows, useColor);
+        render(s, b, cols, rows, useColor, raw);
         _ := Sys.write(Sys.stdout, Buf.bytes(b));
 
         sleepMs := FrameSamples * 1000 div s.rate;
